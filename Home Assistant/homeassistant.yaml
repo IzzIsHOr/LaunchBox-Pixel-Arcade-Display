@@ -1,0 +1,69 @@
+# ============================================================================
+#  Pixel Arcade - Home Assistant
+#
+#  1. Copy everything below into your configuration.yaml
+#  2. Change 192.168.1.60 to your arcade PC's IP address
+#  3. Restart Home Assistant
+#
+#  !! IMPORTANT !!
+#  If your configuration.yaml ALREADY has "rest:" or "template:" starting at
+#  the far left, do NOT paste a second copy of that word. YAML does not allow
+#  it and Home Assistant will refuse to start. Put the new entries under the
+#  one you already have instead.
+#
+#  Requires images_root to be set in the proxy's config.ini.
+#  You do NOT need the LaunchBox MQTT plugin or lbImageServer for this.
+# ============================================================================
+
+
+# --- Reads the proxy once every 5 seconds -----------------------------------
+rest:
+  - resource: http://192.168.1.60:8090/status
+    scan_interval: 5
+    sensor:
+      - name: "LaunchBox Now Playing"
+        unique_id: launchbox_now_playing
+        value_template: >-
+          {{ value_json.title if value_json.title else 'Nothing' }}
+        json_attributes:
+          - title
+          - platform
+          - logo_url
+          - marquee_url
+          - version
+
+
+# --- Turns that into sensors with pictures ----------------------------------
+template:
+  - sensor:
+      # The state is the game TITLE, and the picture rides along in
+      # entity_picture. Home Assistant caps a state at 255 characters, so
+      # putting the URL in the state would silently break on long paths.
+      - name: "LaunchBox Now Playing Clear Logo Image"
+        unique_id: launchbox_now_playing_clear_logo_image
+        state: "{{ state_attr('sensor.launchbox_now_playing', 'title') or 'Nothing' }}"
+        attributes:
+          entity_picture: "{{ state_attr('sensor.launchbox_now_playing', 'logo_url') }}"
+
+      - name: "LaunchBox Now Playing Marquee Image"
+        unique_id: launchbox_now_playing_marquee_image
+        state: "{{ state_attr('sensor.launchbox_now_playing', 'title') or 'Nothing' }}"
+        attributes:
+          entity_picture: "{{ state_attr('sensor.launchbox_now_playing', 'marquee_url') }}"
+
+      - name: "LaunchBox Now Playing Platform"
+        unique_id: launchbox_now_playing_platform
+        state: "{{ state_attr('sensor.launchbox_now_playing', 'platform') or 'None' }}"
+
+
+# ============================================================================
+#  To show it on a dashboard, add a Picture Entity card:
+#
+#      type: picture-entity
+#      entity: sensor.launchbox_now_playing_clear_logo_image
+#      show_state: true
+#      show_name: false
+#
+#  Check it worked: Developer Tools -> States -> sensor.launchbox_now_playing
+#  should show whatever game is selected in LaunchBox.
+# ============================================================================

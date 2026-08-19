@@ -1,0 +1,16 @@
+# Never touch these - line-ending conversion would corrupt them.
+*.exe   binary
+*.dll   binary
+*.png   binary
+
+# Windows batch files must keep CRLF or they can misbehave.
+*.bat   text eol=crlf
+
+# Everything else: normalise to LF in the repo.
+*.go    text eol=lf
+*.cs    text eol=lf
+*.h     text eol=lf
+*.yaml  text eol=lf
+*.md    text eol=lf
+*.ini   text eol=lf
+*.txt   text eol=lf

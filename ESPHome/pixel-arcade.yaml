@@ -1,0 +1,223 @@
+# ============================================================================
+#  Pixel Arcade Display - ESP32 firmware (ESPHome)
+#
+#  EDIT the values in "substitutions" below to match YOUR setup, then flash.
+#  Everything user-specific lives there; you should not need to touch the
+#  rest of the file.
+# ============================================================================
+
+substitutions:
+  # --- Network ---------------------------------------------------------------
+  wifi_ssid: "YOUR_WIFI_NAME" # your WiFi name
+  wifi_password: "YOUR_WIFI_PASSWORD" # your WiFi password
+  device_ip: "192.168.1.41" # static IP you want the ESP to have
+  gateway_ip: "192.168.1.1" # your router IP
+  subnet_mask: "255.255.255.0"
+
+  # --- Proxy -----------------------------------------------------------------
+  # IP:port of the PC running arcade-imgproxy.exe
+  proxy_host: "192.168.1.60:8090"
+
+  # --- Display ---------------------------------------------------------------
+  spi_speed: "40MHz"
+
+  # Default backlight brightness once an image is showing (0-100%). Keep
+  # these two in sync - boot_brightness is for Home Assistant/the light
+  # entity, boot_brightness_float (0.0-1.0) is what the firmware itself
+  # uses to drive the backlight directly during transitions.
+  boot_brightness: "70%"
+  boot_brightness_float: "0.70"
+
+  # --- OTA / API secrets (change these for your own device) ------------------
+  ota_password: "CHANGE_ME"
+
+# =============================================================================
+
+esphome:
+  name: pixel-arcade
+  friendly_name: Pixel Arcade Display
+  includes:
+    - arcade_image.h
+
+esp32:
+  board: nodemcu-32s
+  framework:
+    type: arduino
+    advanced:
+      sram1_as_iram: true
+      minimum_chip_revision: "3.1"
+
+logger:
+  level: INFO
+
+spi:
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+
+globals:
+  - id: last_version
+    type: int
+    restore_value: no
+    initial_value: "-1"
+  - id: pending_change
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  # Set true while the screen has been manually switched off. Cleared
+  # automatically the next time the game changes, so a new logo always
+  # comes back at the default brightness.
+  - id: light_off
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+http_request:
+  verify_ssl: false
+  # Short timeout: the /version poll is a single fast request, so the main
+  # loop never stays parked on HTTP for more than a couple of seconds - the
+  # ESPHome API stays responsive to Home Assistant the whole time.
+  timeout: 5s
+
+wifi:
+  use_address: ${device_ip}
+  ssid: ${wifi_ssid}
+  password: ${wifi_password}
+  manual_ip:
+    static_ip: ${device_ip}
+    gateway: ${gateway_ip}
+    subnet: ${subnet_mask}
+  reboot_timeout: 2min
+  on_connect:
+    # Stay dark until there's actually something to show - no splash, no
+    # text, just a black screen until the first image is ready. If the
+    # screen was manually switched off (light_off set), stay dark through
+    # the reconnect too; the next game change relights it.
+    - lambda: |-
+        id(backlight_pwm).set_level(0.0);
+        if (arcade_load_image("http://${proxy_host}/current", id(my_display)))
+          if (!id(light_off)) id(backlight_pwm).set_level(${boot_brightness_float});
+
+    - http_request.get:
+        url: "http://${proxy_host}/version"
+        capture_response: true
+        on_response:
+          then:
+            - lambda: |-
+                if (!body.empty()) id(last_version) = atoi(body.c_str());
+
+# Poll /version once a second instead of long-polling /wait. The long-poll
+# parked the main loop for ~25s at a time, which starved the ESPHome API
+# connection: Home Assistant commands (the screen switch, scenes) could sit
+# unprocessed for minutes or get lost entirely. A 1s poll keeps the loop
+# free, so the switch responds almost immediately; the only cost is ~1 small
+# request per second to the proxy.
+interval:
+  - interval: 1s
+    then:
+      - http_request.get:
+          url: "http://${proxy_host}/version"
+          capture_response: true
+          on_response:
+            then:
+              - lambda: |-
+                  if (body.empty()) return;
+                  int ver = atoi(body.c_str());
+                  if (ver == id(last_version)) return;  // nothing changed
+                  id(last_version) = ver;
+                  id(pending_change) = true;
+          on_error:
+            then:
+              - lambda: |-
+                  id(last_version) = -1;  // forces a real check once the proxy's back
+      # Go dark, swap the image, then come back up - writing the output
+      # directly (not light.turn_on/off) so it actually happens before and
+      # after arcade_load_image() runs, not on the light component's own
+      # next loop() tick. On failure, just stay dark and keep retrying -
+      # no point lighting up a screen with nothing valid on it.
+      #
+      # A game change always wins over a manual off: light_off is cleared
+      # and the switch is published back as on, so the new logo shows at
+      # the default brightness.
+      - if:
+          condition:
+            lambda: "return id(pending_change);"
+          then:
+            - lambda: |-
+                id(pending_change) = false;
+                id(backlight_pwm).set_level(0.0);
+                bool ok = arcade_load_image("http://${proxy_host}/current", id(my_display));
+                if (!ok) {
+                  id(last_version) = -1;  // retry on the next poll
+                } else {
+                  id(light_off) = false;
+                  id(screen_power).publish_state(true);
+                  id(backlight_pwm).set_level(${boot_brightness_float});
+                }
+
+# Manual screen on/off. Both actions write the LEDC hardware register
+# directly via set_level(), which takes effect immediately regardless of
+# what the main loop is doing - no queued change can get stuck behind the
+# HTTP polling.
+switch:
+  - platform: template
+    name: "Pixel Arcade Screen"
+    id: screen_power
+    optimistic: true
+    restore_mode: ALWAYS_ON
+    turn_on_action:
+      - lambda: |-
+          id(light_off) = false;
+          id(backlight_pwm).set_level(${boot_brightness_float});
+    turn_off_action:
+      - lambda: |-
+          id(light_off) = true;
+          id(backlight_pwm).set_level(0.0);
+
+display:
+  - platform: mipi_spi
+    id: my_display
+    model: ILI9488
+    cs_pin: GPIO21
+    dc_pin: GPIO27
+    reset_pin: GPIO4
+    pixel_mode: 18bit
+    color_order: bgr
+    byte_order: big_endian
+    invert_colors: false
+    data_rate: ${spi_speed}
+    update_interval: never
+    transform:
+      swap_xy: true
+      mirror_x: false
+      mirror_y: false
+    dimensions:
+      height: 320
+      width: 480
+    # ILI9488 gamma + power + VCOM. This is what makes blacks/whites and
+    # viewing angles correct. Keep it unless you know your panel needs other
+    # values.
+    init_sequence:
+      - [0xE0, 0x00, 0x03, 0x09, 0x08, 0x16, 0x0A, 0x3F, 0x78, 0x4C, 0x09, 0x0A, 0x08, 0x16, 0x1A, 0x0F]
+      - [0xE1, 0x00, 0x16, 0x19, 0x03, 0x0F, 0x05, 0x32, 0x45, 0x46, 0x04, 0x0E, 0x0D, 0x35, 0x37, 0x0F]
+      - [0xC0, 0x17, 0x15]
+      - [0xC1, 0x41]
+      - [0xC5, 0x00, 0x12, 0x80]
+    lambda: |-
+      // The image loader paints the whole screen itself; nothing to do here.
+
+# Backlight on PWM (GPIO32). Wire the display's LED/BL pin to GPIO32.
+# If you'd rather have it always full-on, wire LED/BL to 3.3V and delete
+# this output block (and the switch above).
+output:
+  - platform: ledc
+    pin: GPIO32
+    id: backlight_pwm
+    frequency: 1000Hz
+
+# Optional: enables Home Assistant control of the screen switch and OTA
+# from HA. Delete this block if you don't use Home Assistant at all.
+api:
+
+ota:
+  - platform: esphome
+    password: ${ota_password}

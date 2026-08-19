@@ -1,0 +1,241 @@
+============================================================================
+ PIXEL ARCADE DISPLAY - SETUP
+============================================================================
+
+ Do the parts in order. Each one ends with a CHECK so you know it worked
+ before moving on.
+
+     PART 1   Your PC (LaunchBox)          ~5 min    <- required
+     PART 2   The ESP32 screen             ~10 min   <- required
+     PART 3   Home Assistant               ~5 min    <- optional
+     PART 4   Remove the old plugins       ~2 min    <- only if you had them
+
+ Nothing needs compiling. The .exe and .dll are already built.
+
+ Everywhere below, replace these with your own:
+     D:\LaunchBox        where LaunchBox is installed
+     192.168.1.60        your PC's IP address
+     192.168.1.41        the IP you want to give the ESP32
+
+
+============================================================================
+ PART 1 - YOUR PC (LaunchBox)
+============================================================================
+
+ 1.1  Copy the folder "PixelArcade" (inside "LaunchBox Plugin") into
+      LaunchBox's Plugins folder.
+
+      You should end up with exactly this:
+
+          D:\LaunchBox\Plugins\PixelArcade\
+              PixelArcade.dll
+              arcade-imgproxy.exe
+              config.ini
+              default.png
+              install-service.bat
+              uninstall-service.bat
+
+ 1.2  Open config.ini in Notepad. Find this line:
+
+          images_root = D:\LaunchBox\Images
+
+      Make it point at YOUR LaunchBox Images folder. Save.
+
+      (Only needed for Home Assistant. Leave it blank if you just want
+      the screen.)
+
+ 1.3  Double-click arcade-imgproxy.exe
+
+      Nothing will appear on screen. That is normal - it runs hidden in
+      the background.
+
+ 1.4  Restart LaunchBox.
+
+ ---> CHECK: open this in a web browser on your PC:
+
+          http://localhost:8090/status
+
+      You should see a line of text like:
+
+          {"version":0,"title":"","platform":"", ... }
+
+      Now click a game in LaunchBox, then refresh that page.
+      "title" should show the game's name.
+
+      If yes, PART 1 is done.
+
+
+ OPTIONAL - start the proxy automatically at every boot:
+      Right-click install-service.bat -> "Run as administrator".
+      To undo later, run uninstall-service.bat the same way.
+
+
+============================================================================
+ PART 2 - THE ESP32 SCREEN
+============================================================================
+
+ 2.1  Wire the display to the ESP32:
+
+          DISPLAY          ESP32
+          -------          -----
+          VCC       ->     3.3V
+          GND       ->     GND
+          CS        ->     GPIO21
+          RESET     ->     GPIO4
+          DC        ->     GPIO27
+          MOSI      ->     GPIO23
+          CLK       ->     GPIO18
+          LED / BL  ->     GPIO32
+
+ 2.2  Copy BOTH of these into your ESPHome folder. They must sit next to
+      each other in the same folder:
+
+          pixel-arcade.yaml
+          arcade_image.h
+
+ 2.3  Open pixel-arcade.yaml. Edit ONLY the block at the top called
+      "substitutions":
+
+          wifi_ssid:      "YOUR_WIFI_NAME"        <- must change
+          wifi_password:  "YOUR_WIFI_PASSWORD"    <- must change
+          ota_password:   "CHANGE_ME"             <- must change (any text)
+          device_ip:      "192.168.1.41"          <- IP for the ESP32
+          gateway_ip:     "192.168.1.1"           <- your router
+          proxy_host:     "192.168.1.60:8090"     <- your PC's IP + :8090
+
+      Leave everything below that block alone.
+
+ 2.4  Flash it with ESPHome as normal.
+
+ ---> CHECK: select a game in LaunchBox. Its logo appears on the screen
+      within about a second.
+
+      The screen stays black until there is something to show. That is
+      normal, not a fault.
+
+
+============================================================================
+ PART 3 - HOME ASSISTANT  (optional)
+============================================================================
+
+ Skip this if you do not use Home Assistant.
+
+ 3.1  Open the file "Home Assistant\homeassistant.yaml" from this package.
+
+ 3.2  Copy its contents into your configuration.yaml.
+
+ 3.3  Change 192.168.1.60 to your PC's IP address.
+
+ 3.4  IMPORTANT - if your configuration.yaml ALREADY has a line that says
+      "rest:" or "template:" at the far left, do NOT paste a second one.
+      YAML does not allow the same word twice at the far left and Home
+      Assistant will refuse to start.
+
+      Instead, put the new entries underneath the one you already have.
+
+ 3.5  Restart Home Assistant.
+
+ ---> CHECK: in Developer Tools -> States, look for:
+
+          sensor.launchbox_now_playing
+
+      Its state should be the game you have selected in LaunchBox.
+
+      You also get these, each with the picture attached:
+
+          sensor.launchbox_now_playing_clear_logo_image
+          sensor.launchbox_now_playing_marquee_image
+          sensor.launchbox_now_playing_platform
+
+      To show it on a dashboard, add a Picture Entity card pointing at
+      sensor.launchbox_now_playing_clear_logo_image
+
+
+============================================================================
+ PART 4 - REMOVE THE OLD PLUGINS  (only if you had them)
+============================================================================
+
+ If you were using the LaunchBox MQTT plugin and/or lbImageServer to get
+ images into Home Assistant, you do not need either any more. This package
+ does both jobs on port 8090.
+
+ Do this ONLY after PART 3's check passed:
+
+ 4.1  Delete your OLD template sensors from configuration.yaml - the long
+      ones full of "replace(...)" lines pointing at port 8089.
+
+ 4.2  Stop and remove lbImageServer.
+
+ 4.3  Remove the LaunchBox MQTT plugin.
+
+ 4.4  Restart Home Assistant.
+
+ Your entity names do not change, so any dashboard cards keep working.
+
+
+============================================================================
+ IF SOMETHING DOES NOT WORK
+============================================================================
+
+ Open http://localhost:8090/status on the PC first. It tells you which
+ half is broken.
+
+ PAGE WILL NOT LOAD AT ALL
+   arcade-imgproxy.exe is not running. Double-click it again.
+   Check nothing else is already using port 8090.
+
+ PAGE LOADS BUT "title" IS ALWAYS EMPTY
+   LaunchBox is not loading the plugin.
+   - Is PixelArcade.dll in D:\LaunchBox\Plugins\PixelArcade\ ?
+   - Did you restart LaunchBox after copying it?
+   - Is there a file called Unbroken.LaunchBox.Plugins.dll in that
+     folder? DELETE IT. LaunchBox uses its own copy, and a spare one
+     sitting next to the plugin stops the plugin being detected.
+
+ "logo_url" SAYS current.png INSTEAD OF A REAL PATH
+   images_root in config.ini is wrong or the folder does not exist.
+   Check the path is exactly right, then restart arcade-imgproxy.exe.
+
+ SCREEN STAYS BLACK
+   - Can the ESP32 reach the PC? Try http://192.168.1.60:8090/status
+     from your phone on the same WiFi.
+   - Is proxy_host in pixel-arcade.yaml your PC's real IP, with :8090 ?
+   - Check the LED/BL wire is on GPIO32.
+
+ HOME ASSISTANT WILL NOT START AFTER EDITING
+   You almost certainly have "rest:" or "template:" twice at the far
+   left of configuration.yaml. See step 3.4.
+
+ PICTURE IS BLANK IN HOME ASSISTANT
+   Open the logo_url shown at http://localhost:8090/status directly in
+   a browser. If that does not load, images_root is wrong (see above).
+
+
+============================================================================
+ USEFUL ADDRESSES
+============================================================================
+
+ Replace localhost with your PC's IP to check from another device.
+
+   http://localhost:8090/status        what is playing, as JSON
+   http://localhost:8090/current.png   the logo on the screen right now
+   http://localhost:8090/version       a number, changes on every switch
+   http://localhost:8090/current       raw data for the ESP32 (binary)
+
+
+============================================================================
+ THE Source FOLDER
+============================================================================
+
+ Not needed to run anything. It is there so you can modify and rebuild.
+
+   arcade-imgproxy.go      ->  arcade-imgproxy.exe
+   PixelArcadePlugin.cs    ->  PixelArcade.dll
+
+ Rebuild the proxy:
+   go build -ldflags="-s -w -H windowsgui" -o arcade-imgproxy.exe arcade-imgproxy.go
+
+ Rebuild the plugin (needs Unbroken.LaunchBox.Plugins.dll from
+ D:\LaunchBox\Core\ - reference it, but do NOT ship it beside the plugin):
+   csc -target:library -reference:Unbroken.LaunchBox.Plugins.dll
+       -out:PixelArcade.dll PixelArcadePlugin.cs
