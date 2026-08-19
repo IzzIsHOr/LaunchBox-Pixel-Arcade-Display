@@ -51,17 +51,9 @@ template:
         attributes:
           entity_picture: "{{ state_attr('sensor.launchbox_now_playing', 'marquee_url') }}"
 
-      # These two render an EMPTY string when nothing is selected, which Home
-      # Assistant turns into the state "unknown". That is deliberate - it lets
-      # dashboard cards test for unknown/unavailable to show their own "not
-      # playing" text, instead of printing a literal word like "Nothing".
-      - name: "LaunchBox Now Playing Title"
-        unique_id: launchbox_now_playing_title
-        state: "{{ state_attr('sensor.launchbox_now_playing', 'title') }}"
-
       - name: "LaunchBox Now Playing Platform"
         unique_id: launchbox_now_playing_platform
-        state: "{{ state_attr('sensor.launchbox_now_playing', 'platform') }}"
+        state: "{{ state_attr('sensor.launchbox_now_playing', 'platform') or 'None' }}"
 
 
 # ============================================================================
